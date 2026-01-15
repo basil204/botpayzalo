@@ -12,6 +12,9 @@ if (naptienCommand.startPolling) {
 // Constants
 const MAX_QUANTITY_PER_PURCHASE = 20;
 
+// Store user purchase state
+const purchaseStates = new Map(); // userId -> { productId, product, step }
+
 /**
  * Generate random 8 character code (letters and numbers)
  */
@@ -77,7 +80,7 @@ module.exports = {
       return bot.sendMessage(chatId, message);
     }
     
-    // Step 2: User selected product, process purchase
+    // Step 2: User selected product, ask for quantity
     const productId = productIdArg.trim();
     const product = db.getProduct(productId);
     
@@ -100,19 +103,76 @@ module.exports = {
       );
     }
     
-    // Determine quantity (max 20 or available)
-    const quantity = Math.min(MAX_QUANTITY_PER_PURCHASE, availableCount);
-    const totalPrice = product.price * quantity;
-    const userBalance = db.getUserBalance(userId);
+    // Store purchase state
+    purchaseStates.set(userId, {
+      productId: productId,
+      product: product,
+      step: 'quantity'
+    });
     
-    // Check if user has enough balance
-    if (userBalance.balance >= totalPrice) {
-      // User has enough balance, process purchase immediately
-      return await processPurchase(bot, chatId, userId, product, quantity, totalPrice);
-    } else {
-      // Not enough balance, create QR code for payment
-      return await createPurchaseQR(bot, chatId, userId, product, quantity, totalPrice);
-    }
+    const maxQuantity = Math.min(MAX_QUANTITY_PER_PURCHASE, availableCount);
+    
+    return bot.sendMessage(chatId,
+      `🛒 *Chọn số lượng*\n\n` +
+      `📝 Sản phẩm: ${product.name}\n` +
+      `💰 Giá: ${product.price.toLocaleString('vi-VN')}đ/1 tài khoản\n` +
+      `📦 Còn lại: ${availableCount} tài khoản\n\n` +
+      `💡 Vui lòng nhập số lượng muốn mua (1-${maxQuantity}):\n` +
+      `   Ví dụ: 1, 2, 3...`
+    );
+  }
+};
+
+/**
+ * Handle quantity input and process purchase
+ */
+module.exports.handleQuantity = async function(bot, msg) {
+  const chatId = msg.chat.id;
+  const userId = msg.from?.id || chatId.toString();
+  
+  const purchaseState = purchaseStates.get(userId);
+  if (!purchaseState || purchaseState.step !== 'quantity') {
+    return false; // Not in purchase flow
+  }
+  
+  const quantityText = msg.text?.trim();
+  const quantity = parseInt(quantityText);
+  
+  if (isNaN(quantity) || quantity <= 0) {
+    return bot.sendMessage(chatId,
+      `❌ *Số lượng không hợp lệ*\n\n` +
+      `💡 Vui lòng nhập số lượng là số dương.\n` +
+      `Ví dụ: 1, 2, 3...`
+    ).then(() => true);
+  }
+  
+  const product = purchaseState.product;
+  const availableCount = (product.accounts || []).filter(acc => !acc.sold).length;
+  const maxQuantity = Math.min(MAX_QUANTITY_PER_PURCHASE, availableCount);
+  
+  if (quantity > maxQuantity) {
+    purchaseStates.delete(userId);
+    return bot.sendMessage(chatId,
+      `❌ *Số lượng vượt quá giới hạn*\n\n` +
+      `📦 Số lượng tối đa: ${maxQuantity} tài khoản\n` +
+      `Bạn yêu cầu: ${quantity} tài khoản.\n\n` +
+      `💡 Vui lòng chọn lại số lượng hoặc sản phẩm khác.`
+    ).then(() => true);
+  }
+  
+  const totalPrice = product.price * quantity;
+  const userBalance = db.getUserBalance(userId);
+  
+  // Clear purchase state
+  purchaseStates.delete(userId);
+  
+  // Check if user has enough balance
+  if (userBalance.balance >= totalPrice) {
+    // User has enough balance, process purchase immediately
+    return await processPurchase(bot, chatId, userId, product, quantity, totalPrice).then(() => true);
+  } else {
+    // Not enough balance, create QR code for payment
+    return await createPurchaseQR(bot, chatId, userId, product, quantity, totalPrice).then(() => true);
   }
 };
 
