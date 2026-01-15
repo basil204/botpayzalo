@@ -3,6 +3,7 @@ const Database = require('../../utils/db');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
+const Helpers = require('../../utils/helpers');
 
 const db = new Database();
 
@@ -152,6 +153,43 @@ function findTransactionByCode(transactions, code, amount) {
 }
 
 /**
+ * Notify admins about successful purchase
+ */
+async function notifyAdminsPurchase(bot, userId, product, quantity, totalPrice, paymentMethod) {
+  try {
+    const config = Helpers.loadConfig();
+    const admins = config.admins || [];
+    
+    if (admins.length === 0) {
+      return;
+    }
+    
+    const paymentMethodText = paymentMethod === 'balance' ? 'Số dư' : 'QR Code';
+    
+    const adminMessage = `🛒 *Thông báo: Có người mua hàng thành công!*\n\n` +
+      `👤 User ID: ${userId}\n` +
+      `📝 Sản phẩm: ${product.name}\n` +
+      `📊 Số lượng: ${quantity} tài khoản\n` +
+      `💵 Tổng tiền: ${totalPrice.toLocaleString('vi-VN')}đ\n` +
+      `💳 Phương thức: ${paymentMethodText}\n\n` +
+      `✅ Đã giao hàng thành công!`;
+    
+    // Send to all admins
+    for (const adminId of admins) {
+      try {
+        await bot.sendMessage(adminId, adminMessage);
+      } catch (error) {
+        Logger.warn(`[NAPTIEN] Không thể gửi thông báo đến admin ${adminId}: ${error.message}`);
+      }
+    }
+    
+    Logger.info(`[NAPTIEN] Đã thông báo cho ${admins.length} admin về giao dịch mua hàng của user ${userId}`);
+  } catch (error) {
+    Logger.error(`[NAPTIEN] Lỗi khi thông báo admin: ${error.message}`);
+  }
+}
+
+/**
  * Process purchase transaction and deliver accounts
  */
 async function processPurchaseTransaction(bot, transaction, transactionId) {
@@ -237,6 +275,9 @@ async function processPurchaseTransaction(bot, transaction, transactionId) {
     await bot.sendMessage(transaction.chatId, accountsMessage);
     
     Logger.info(`[NAPTIEN] Đã giao ${quantity}x ${productName} cho user ${transaction.userId} qua purchase transaction ${transactionId}`);
+    
+    // Notify admins
+    await notifyAdminsPurchase(bot, transaction.userId, product, quantity, parseInt(transaction.amount), 'QR Code');
   } catch (error) {
     Logger.error(`[NAPTIEN] Lỗi khi xử lý purchase transaction ${transactionId}: ${error.message}`);
     try {

@@ -1,6 +1,7 @@
 const Logger = require('../../utils/logger');
 const Database = require('../../utils/db');
 const naptienCommand = require('./naptien');
+const Helpers = require('../../utils/helpers');
 
 const db = new Database();
 
@@ -36,6 +37,43 @@ function generateVietQRUrl(amount, content) {
   const template = 'compact2';
   const url = `https://img.vietqr.io/image/${BANK_CODE}-${BANK_ACCOUNT}-${template}.jpg?amount=${amount}&addInfo=${content}`;
   return url;
+}
+
+/**
+ * Notify admins about successful purchase
+ */
+async function notifyAdminsPurchase(bot, userId, product, quantity, totalPrice, paymentMethod) {
+  try {
+    const config = Helpers.loadConfig();
+    const admins = config.admins || [];
+    
+    if (admins.length === 0) {
+      return;
+    }
+    
+    const paymentMethodText = paymentMethod === 'balance' ? 'Số dư' : 'QR Code';
+    
+    const adminMessage = `🛒 *Thông báo: Có người mua hàng thành công!*\n\n` +
+      `👤 User ID: ${userId}\n` +
+      `📝 Sản phẩm: ${product.name}\n` +
+      `📊 Số lượng: ${quantity} tài khoản\n` +
+      `💵 Tổng tiền: ${totalPrice.toLocaleString('vi-VN')}đ\n` +
+      `💳 Phương thức: ${paymentMethodText}\n\n` +
+      `✅ Đã giao hàng thành công!`;
+    
+    // Send to all admins
+    for (const adminId of admins) {
+      try {
+        await bot.sendMessage(adminId, adminMessage);
+      } catch (error) {
+        Logger.warn(`[BUY] Không thể gửi thông báo đến admin ${adminId}: ${error.message}`);
+      }
+    }
+    
+    Logger.info(`[BUY] Đã thông báo cho ${admins.length} admin về giao dịch mua hàng của user ${userId}`);
+  } catch (error) {
+    Logger.error(`[BUY] Lỗi khi thông báo admin: ${error.message}`);
+  }
 }
 
 /**
@@ -236,6 +274,9 @@ async function processPurchase(bot, chatId, userId, product, quantity, totalPric
     accountsMessage += `💡 Vui lòng lưu lại thông tin tài khoản!`;
     
     Logger.info(`[BUY] User ${userId} đã mua ${quantity}x ${product.name} với giá ${totalPrice}đ`);
+    
+    // Notify admins
+    await notifyAdminsPurchase(bot, userId, product, quantity, totalPrice, 'balance');
     
     return bot.sendMessage(chatId, accountsMessage);
   } catch (error) {
