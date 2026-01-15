@@ -172,26 +172,6 @@ class Database {
   }
 
   /**
-   * Get pending transaction by userId
-   * Returns the first active (not expired) pending transaction for the user
-   */
-  getPendingTransactionByUserId(userId) {
-    const pending = this.getPendingTransactions();
-    const now = new Date();
-    
-    for (const [id, transaction] of Object.entries(pending.transactions)) {
-      if (transaction.userId === userId) {
-        const expiresAt = new Date(transaction.expiresAt);
-        // Only return if not expired
-        if (now <= expiresAt) {
-          return { id, ...transaction };
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
    * Transaction history (refNo tracking)
    */
   getTransactionHistory() {

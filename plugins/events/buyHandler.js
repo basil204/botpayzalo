@@ -30,9 +30,6 @@ module.exports = {
       try {
         const handled = await buyCommand.handleQuantity(bot, msg);
         // If handled, we don't need to do anything else
-        if (handled) {
-          return;
-        }
       } catch (error) {
         // Silently ignore errors
       }
