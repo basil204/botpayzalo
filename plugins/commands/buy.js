@@ -134,7 +134,7 @@ module.exports.handleQuantity = async function(bot, msg) {
       `💰 Số dư hiện tại: ${userBalance.balance.toLocaleString('vi-VN')}đ\n` +
       `💵 Tổng tiền cần: ${totalPrice.toLocaleString('vi-VN')}đ\n` +
       `📊 Thiếu: ${(totalPrice - userBalance.balance).toLocaleString('vi-VN')}đ\n\n` +
-      `💡 Sử dụng /naptien để nạp thêm tiền.`
+      `💡 Sử dụng .naptien để nạp thêm tiền.`
     ).then(() => true);
   }
   
