@@ -157,7 +157,11 @@ function findTransactionByCode(transactions, code, amount) {
   
   Logger.info(`[NAPTIEN] Đang tìm transaction với code: "${code}", amount: ${targetAmount}, trong ${transactions.length} giao dịch`);
 
-  for (const transaction of transactions) {
+  // Tìm tất cả transactions có cùng amount để log chi tiết
+  const matchingAmountTransactions = [];
+  
+  for (let i = 0; i < transactions.length; i++) {
+    const transaction = transactions[i];
     try {
       // Check if addDescription contains the code
       const addDesc = (transaction.addDescription || '').toUpperCase().trim();
@@ -172,21 +176,34 @@ function findTransactionByCode(transactions, code, amount) {
         }
       }
       
-      // Check code match (remove spaces and special chars for comparison)
-      const normalizedAddDesc = addDesc.replace(/\s+/g, '');
-      const normalizedDescription = description.replace(/\s+/g, '');
-      const normalizedCode = codeUpper.replace(/\s+/g, '');
+      // Check code match - tìm code trong cả addDescription và description
+      // Code có thể xuất hiện ở bất kỳ đâu trong chuỗi
+      // Sử dụng includes() để tìm substring
+      const hasCodeInAddDesc = addDesc.includes(codeUpper);
+      const hasCodeInDesc = description.includes(codeUpper);
+      const hasCode = hasCodeInAddDesc || hasCodeInDesc;
       
-      const hasCode = normalizedAddDesc.includes(normalizedCode) || normalizedDescription.includes(normalizedCode);
+      // Amount match - so sánh chính xác
       const amountMatch = creditAmount === targetAmount;
       
-      // Log all transactions for debugging (only first few to avoid spam)
-      if (transactions.indexOf(transaction) < 3) {
-        Logger.info(`[NAPTIEN] Checking transaction ${transaction.refNo || 'N/A'}: addDesc="${addDesc}", desc="${description}", amount=${creditAmount}`);
+      // Lưu lại các transaction có cùng amount để log sau
+      if (amountMatch) {
+        matchingAmountTransactions.push({
+          index: i + 1,
+          refNo: transaction.refNo || 'N/A',
+          addDesc: addDesc,
+          description: description,
+          hasCode: hasCode
+        });
+      }
+      
+      // Log chi tiết cho transactions có cùng amount HOẶC có code
+      if (amountMatch || hasCode) {
+        Logger.info(`[NAPTIEN] Checking transaction ${i + 1}/${transactions.length} - RefNo: ${transaction.refNo || 'N/A'}: addDesc="${addDesc.substring(0, 200)}", desc="${description.substring(0, 200)}", amount=${creditAmount}, hasCode=${hasCode}, amountMatch=${amountMatch}, codeSearch="${codeUpper}"`);
       }
       
       if (hasCode && amountMatch) {
-        Logger.info(`[NAPTIEN] ✅ Tìm thấy matching transaction! RefNo: ${transaction.refNo}, addDesc: "${addDesc}", description: "${description}", amount: ${creditAmount}`);
+        Logger.info(`[NAPTIEN] ✅ Tìm thấy matching transaction! RefNo: ${transaction.refNo}, addDesc: "${addDesc}", description: "${description}", amount: ${creditAmount}, code: ${codeUpper}`);
         return transaction;
       }
       
@@ -194,12 +211,25 @@ function findTransactionByCode(transactions, code, amount) {
       if (hasCode && !amountMatch) {
         Logger.warn(`[NAPTIEN] ⚠️ Code "${code}" tìm thấy nhưng amount không khớp: expected ${targetAmount}, got ${creditAmount} (RefNo: ${transaction.refNo || 'N/A'})`);
       }
+      
+      // Log for debugging if amount matches but code doesn't
+      if (!hasCode && amountMatch) {
+        Logger.warn(`[NAPTIEN] ⚠️ Amount ${targetAmount} khớp nhưng code "${code}" không tìm thấy trong: addDesc="${addDesc.substring(0, 200)}", desc="${description.substring(0, 200)}" (RefNo: ${transaction.refNo || 'N/A'})`);
+      }
     } catch (error) {
-      Logger.error(`[NAPTIEN] Lỗi khi xử lý transaction trong findTransactionByCode: ${error.message}`);
+      Logger.error(`[NAPTIEN] Lỗi khi xử lý transaction ${i + 1} trong findTransactionByCode: ${error.message}`);
     }
   }
   
-  Logger.info(`[NAPTIEN] ❌ Không tìm thấy transaction matching code "${code}" và amount ${targetAmount}`);
+  // Log summary của các transactions có cùng amount
+  if (matchingAmountTransactions.length > 0) {
+    Logger.warn(`[NAPTIEN] Tìm thấy ${matchingAmountTransactions.length} transactions có amount ${targetAmount} nhưng không có code "${code}":`);
+    matchingAmountTransactions.forEach(t => {
+      Logger.warn(`[NAPTIEN]   - Transaction ${t.index}: RefNo=${t.refNo}, hasCode=${t.hasCode}, addDesc="${t.addDesc.substring(0, 150)}"`);
+    });
+  }
+  
+  Logger.info(`[NAPTIEN] ❌ Không tìm thấy transaction matching code "${code}" và amount ${targetAmount} trong ${transactions.length} giao dịch`);
   return null;
 }
 
