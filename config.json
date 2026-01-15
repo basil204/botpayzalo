@@ -1,0 +1,10 @@
+{
+  "admins": [
+    "655e072f987b7125286a"
+  ],
+  "phatnguoi": {
+    "cooldown": 15,
+    "chunk_size": 5
+  }
+}
+
