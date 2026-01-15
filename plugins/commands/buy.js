@@ -186,7 +186,7 @@ module.exports.handleQuantity = async function(bot, msg) {
         `💰 Số tiền: ${parseInt(existingTransaction.amount).toLocaleString('vi-VN')}đ\n` +
         `📋 Loại: ${transactionType}\n` +
         `⏰ Còn lại: ${minutesLeft} phút\n\n` +
-        `💡 Vui lòng đợi giao dịch này hoàn thành hoặc hết hạn trước khi tạo giao dịch mới.`
+        `💡 Sử dụng .cancel hoặc .huy để hủy giao dịch này trước khi tạo giao dịch mới.`
       ).then(() => true);
     }
     
