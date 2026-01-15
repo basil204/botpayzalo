@@ -24,15 +24,5 @@ module.exports = {
         // Silently ignore errors
       }
     }
-    
-    // Check if user is in purchase flow
-    if (buyCommand.handleQuantity) {
-      try {
-        const handled = await buyCommand.handleQuantity(bot, msg);
-        // If handled, we don't need to do anything else
-      } catch (error) {
-        // Silently ignore errors
-      }
-    }
   }
 };

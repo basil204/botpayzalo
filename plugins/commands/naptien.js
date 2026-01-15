@@ -152,6 +152,105 @@ function findTransactionByCode(transactions, code, amount) {
 }
 
 /**
+ * Process purchase transaction and deliver accounts
+ */
+async function processPurchaseTransaction(bot, transaction, transactionId) {
+  try {
+    const Database = require('../../utils/db');
+    const db = new Database();
+    const Logger = require('../../utils/logger');
+    
+    const productId = transaction.productId;
+    const quantity = transaction.quantity || 1;
+    const productName = transaction.productName || 'Sản phẩm';
+    
+    // Get product
+    const product = db.getProduct(productId);
+    if (!product) {
+      Logger.error(`[NAPTIEN] Không tìm thấy sản phẩm ${productId} cho purchase transaction ${transactionId}`);
+      await bot.sendMessage(transaction.chatId,
+        `❌ *Lỗi hệ thống*\n\n` +
+        `Không tìm thấy sản phẩm. Vui lòng liên hệ admin.`
+      );
+      return;
+    }
+    
+    // Check available accounts
+    const availableCount = (product.accounts || []).filter(acc => !acc.sold).length;
+    if (availableCount < quantity) {
+      Logger.error(`[NAPTIEN] Không đủ tài khoản cho purchase transaction ${transactionId}`);
+      // Refund to balance
+      db.updateUserBalance(
+        transaction.userId,
+        parseInt(transaction.amount),
+        `Hoàn tiền - Không đủ hàng - Mã: ${transaction.code}`
+      );
+      await bot.sendMessage(transaction.chatId,
+        `❌ *Sản phẩm đã hết hàng*\n\n` +
+        `💰 Số tiền đã được hoàn lại vào tài khoản.\n` +
+        `Vui lòng thử lại sau.`
+      );
+      return;
+    }
+    
+    // Get available accounts
+    const accounts = db.getAvailableAccounts(productId, quantity);
+    if (accounts.length < quantity) {
+      Logger.error(`[NAPTIEN] Không thể lấy đủ tài khoản cho purchase transaction ${transactionId}`);
+      // Refund to balance
+      db.updateUserBalance(
+        transaction.userId,
+        parseInt(transaction.amount),
+        `Hoàn tiền - Lỗi hệ thống - Mã: ${transaction.code}`
+      );
+      await bot.sendMessage(transaction.chatId,
+        `❌ *Lỗi hệ thống*\n\n` +
+        `💰 Số tiền đã được hoàn lại vào tài khoản.\n` +
+        `Vui lòng thử lại sau.`
+      );
+      return;
+    }
+    
+    // Mark accounts as sold
+    db.markAccountsAsSold(productId, accounts, transaction.userId);
+    
+    // Record transaction (payment was direct, no balance change needed)
+    // Just log for tracking purposes
+    Logger.info(`[NAPTIEN] Purchase transaction recorded: ${transaction.code}, amount: ${transaction.amount}, product: ${productName}, quantity: ${quantity}`);
+    
+    // Send accounts to user
+    let accountsMessage = `✅ *Thanh toán thành công - Tài khoản đã được giao!*\n\n`;
+    accountsMessage += `📝 Sản phẩm: ${productName}\n`;
+    accountsMessage += `📊 Số lượng: ${quantity} tài khoản\n`;
+    accountsMessage += `💵 Tổng tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n`;
+    accountsMessage += `🔑 Mã giao dịch: ${transaction.code}\n\n`;
+    accountsMessage += `📋 *Thông tin tài khoản:*\n\n`;
+    
+    accounts.forEach((account, index) => {
+      accountsMessage += `${index + 1}. Tài khoản ${index + 1}:\n`;
+      accountsMessage += `   👤 Username: ${account.username}\n`;
+      accountsMessage += `   🔑 Password: ${account.password}\n\n`;
+    });
+    
+    accountsMessage += `💡 Vui lòng lưu lại thông tin tài khoản!`;
+    
+    await bot.sendMessage(transaction.chatId, accountsMessage);
+    
+    Logger.info(`[NAPTIEN] Đã giao ${quantity}x ${productName} cho user ${transaction.userId} qua purchase transaction ${transactionId}`);
+  } catch (error) {
+    Logger.error(`[NAPTIEN] Lỗi khi xử lý purchase transaction ${transactionId}: ${error.message}`);
+    try {
+      await bot.sendMessage(transaction.chatId,
+        `❌ *Lỗi khi giao hàng*\n\n` +
+        `Vui lòng liên hệ admin để được hỗ trợ.`
+      );
+    } catch (err) {
+      Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo lỗi: ${err.message}`);
+    }
+  }
+}
+
+/**
  * Process pending transactions
  */
 async function processPendingTransactions(bot) {
@@ -195,24 +294,30 @@ async function processPendingTransactions(bot) {
         // Add refNo to history
         db.addRefNoToHistory(foundTransaction.refNo, transactionId);
 
-        // Update user balance
-        const userBalance = db.updateUserBalance(
-          transaction.userId,
-          parseInt(transaction.amount),
-          `Nạp tiền - Mã: ${transaction.code}`
-        );
-
-        // Send success message
-        try {
-          await bot.sendMessage(transaction.chatId,
-            `✅ *Nạp tiền thành công!*\n\n` +
-            `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
-            `🔑 Mã giao dịch: ${transaction.code}\n` +
-            `📊 Số dư hiện tại: ${userBalance.balance.toLocaleString('vi-VN')}đ\n\n` +
-            `Cảm ơn bạn đã sử dụng dịch vụ!`
+        // Check transaction type
+        if (transaction.type === 'purchase') {
+          // Handle purchase transaction
+          await processPurchaseTransaction(bot, transaction, transactionId);
+        } else {
+          // Handle top-up transaction
+          const userBalance = db.updateUserBalance(
+            transaction.userId,
+            parseInt(transaction.amount),
+            `Nạp tiền - Mã: ${transaction.code}`
           );
-        } catch (err) {
-          Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo thành công: ${err.message}`);
+
+          // Send success message
+          try {
+            await bot.sendMessage(transaction.chatId,
+              `✅ *Nạp tiền thành công!*\n\n` +
+              `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
+              `🔑 Mã giao dịch: ${transaction.code}\n` +
+              `📊 Số dư hiện tại: ${userBalance.balance.toLocaleString('vi-VN')}đ\n\n` +
+              `Cảm ơn bạn đã sử dụng dịch vụ!`
+            );
+          } catch (err) {
+            Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo thành công: ${err.message}`);
+          }
         }
 
         // Remove from pending
@@ -345,21 +450,6 @@ module.exports = {
         // Fallback: send URL
         await bot.sendMessage(chatId, `🖼️ QR Code: ${qrUrl}`);
       }
-
-      // Send instruction message
-      await bot.sendMessage(chatId,
-        `💳 *QR Code nạp tiền*\n\n` +
-        `💰 Số tiền: ${amount.toLocaleString('vi-VN')}đ\n` +
-        `🔑 Mã giao dịch: *${code}*\n\n` +
-        `📱 *Hướng dẫn:*\n` +
-        `1. Mở ứng dụng ngân hàng MB\n` +
-        `2. Quét QR code trên\n` +
-        `3. Kiểm tra số tiền và mã giao dịch\n` +
-        `4. Nhập nội dung chuyển khoản: *${code}*\n` +
-        `5. Xác nhận chuyển khoản\n\n` +
-        `⏰ QR code có hiệu lực trong 5 phút\n` +
-        `💡 Hệ thống sẽ tự động cập nhật số dư sau khi nhận được giao dịch`
-      );
 
       Logger.info(`[NAPTIEN] Đã tạo QR code cho user ${userId}, amount: ${amount}, code: ${code}`);
     } catch (error) {
