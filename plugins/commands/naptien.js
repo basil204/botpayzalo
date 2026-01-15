@@ -601,6 +601,23 @@ module.exports = {
       }
 
       Logger.info(`[NAPTIEN] Đã tạo QR code cho user ${userId}, amount: ${amount}, code: ${code}`);
+      
+      // Auto check transaction after delay (đợi một chút để API có thời gian cập nhật)
+      // Check nhiều lần với delay tăng dần để tăng khả năng phát hiện
+      const checkDelays = [5000, 10000, 15000, 20000]; // 5s, 10s, 15s, 20s
+      checkDelays.forEach((delay, index) => {
+        setTimeout(async () => {
+          Logger.info(`[NAPTIEN] Auto-check transaction lần ${index + 1} cho code: ${code}`);
+          const pending = db.getPendingTransactions();
+          // Chỉ check nếu transaction vẫn còn pending
+          if (pending.transactions && pending.transactions[transactionId]) {
+            await processPendingTransactions(bot);
+          } else {
+            Logger.info(`[NAPTIEN] Transaction ${transactionId} đã được xử lý, dừng auto-check`);
+          }
+        }, delay);
+      });
+      
     } catch (error) {
       Logger.error(`[NAPTIEN] Lỗi khi gửi QR code: ${error.message}`);
       

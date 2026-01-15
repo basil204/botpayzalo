@@ -332,6 +332,24 @@ async function createPurchaseQR(bot, chatId, userId, product, quantity, totalPri
       }
       
       Logger.info(`[BUY] Đã tạo QR code cho purchase user ${userId}, product: ${product.name}, quantity: ${quantity}, amount: ${totalPrice}, code: ${code}`);
+      
+      // Auto check transaction after delay (đợi một chút để API có thời gian cập nhật)
+      // Check nhiều lần với delay tăng dần để tăng khả năng phát hiện
+      const naptienCommand = require('./naptien');
+      const checkDelays = [5000, 10000, 15000, 20000]; // 5s, 10s, 15s, 20s
+      checkDelays.forEach((delay, index) => {
+        setTimeout(async () => {
+          Logger.info(`[BUY] Auto-check purchase transaction lần ${index + 1} cho code: ${code}`);
+          const pending = db.getPendingTransactions();
+          // Chỉ check nếu transaction vẫn còn pending
+          if (pending.transactions && pending.transactions[transactionId]) {
+            await naptienCommand.processPendingTransactions(bot);
+          } else {
+            Logger.info(`[BUY] Purchase transaction ${transactionId} đã được xử lý, dừng auto-check`);
+          }
+        }, delay);
+      });
+      
     } catch (error) {
       Logger.error(`[BUY] Lỗi khi gửi QR code: ${error.message}`);
       
