@@ -418,6 +418,25 @@ module.exports = {
       );
     }
 
+    // Check if user already has a pending transaction
+    const existingTransaction = db.getPendingTransactionByUserId(userId);
+    if (existingTransaction) {
+      const expiresAt = new Date(existingTransaction.expiresAt);
+      const now = new Date();
+      const minutesLeft = Math.ceil((expiresAt - now) / (1000 * 60));
+      
+      const transactionType = existingTransaction.type === 'purchase' ? 'mua hàng' : 'nạp tiền';
+      
+      return bot.sendMessage(chatId,
+        `⏸️ *Bạn đã có giao dịch đang chờ xử lý*\n\n` +
+        `🔑 Mã giao dịch: *${existingTransaction.code}*\n` +
+        `💰 Số tiền: ${parseInt(existingTransaction.amount).toLocaleString('vi-VN')}đ\n` +
+        `📋 Loại: ${transactionType}\n` +
+        `⏰ Còn lại: ${minutesLeft} phút\n\n` +
+        `💡 Vui lòng đợi giao dịch này hoàn thành hoặc hết hạn trước khi tạo giao dịch mới.`
+      );
+    }
+
     // Generate random code
     const code = generateRandomCode();
     const transactionId = `${userId}-${Date.now()}-${code}`;

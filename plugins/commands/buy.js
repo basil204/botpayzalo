@@ -171,6 +171,25 @@ module.exports.handleQuantity = async function(bot, msg) {
     // User has enough balance, process purchase immediately
     return await processPurchase(bot, chatId, userId, product, quantity, totalPrice).then(() => true);
   } else {
+    // Check if user already has a pending transaction
+    const existingTransaction = db.getPendingTransactionByUserId(userId);
+    if (existingTransaction) {
+      const expiresAt = new Date(existingTransaction.expiresAt);
+      const now = new Date();
+      const minutesLeft = Math.ceil((expiresAt - now) / (1000 * 60));
+      
+      const transactionType = existingTransaction.type === 'purchase' ? 'mua hàng' : 'nạp tiền';
+      
+      return bot.sendMessage(chatId,
+        `⏸️ *Bạn đã có giao dịch đang chờ xử lý*\n\n` +
+        `🔑 Mã giao dịch: *${existingTransaction.code}*\n` +
+        `💰 Số tiền: ${parseInt(existingTransaction.amount).toLocaleString('vi-VN')}đ\n` +
+        `📋 Loại: ${transactionType}\n` +
+        `⏰ Còn lại: ${minutesLeft} phút\n\n` +
+        `💡 Vui lòng đợi giao dịch này hoàn thành hoặc hết hạn trước khi tạo giao dịch mới.`
+      ).then(() => true);
+    }
+    
     // Not enough balance, create QR code for payment
     return await createPurchaseQR(bot, chatId, userId, product, quantity, totalPrice).then(() => true);
   }
@@ -267,23 +286,6 @@ async function createPurchaseQR(bot, chatId, userId, product, quantity, totalPri
       } else {
         await bot.sendMessage(chatId, `🖼️ QR Code: ${qrUrl}`);
       }
-      
-      // Send instruction message
-      await bot.sendMessage(chatId,
-        `💳 *QR Code thanh toán mua hàng*\n\n` +
-        `📝 Sản phẩm: ${product.name}\n` +
-        `📊 Số lượng: ${quantity} tài khoản\n` +
-        `💰 Số tiền: ${totalPrice.toLocaleString('vi-VN')}đ\n` +
-        `🔑 Mã giao dịch: *${code}*\n\n` +
-        `📱 *Hướng dẫn:*\n` +
-        `1. Mở ứng dụng ngân hàng MB\n` +
-        `2. Quét QR code trên\n` +
-        `3. Kiểm tra số tiền và mã giao dịch\n` +
-        `4. Nhập nội dung chuyển khoản: *${code}*\n` +
-        `5. Xác nhận chuyển khoản\n\n` +
-        `⏰ QR code có hiệu lực trong 5 phút\n` +
-        `💡 Sau khi thanh toán thành công, tài khoản sẽ được giao tự động`
-      );
       
       Logger.info(`[BUY] Đã tạo QR code cho purchase user ${userId}, product: ${product.name}, quantity: ${quantity}, amount: ${totalPrice}, code: ${code}`);
     } catch (error) {
