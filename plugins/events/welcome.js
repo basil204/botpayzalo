@@ -34,7 +34,7 @@ module.exports = {
     welcomeMsg += `   🔍 Check live/die Facebook\n`;
     welcomeMsg += `   ℹ️ Thông tin và tiện ích khác\n\n`;
     welcomeMsg += `📖 *Xem danh sách lệnh:*\n`;
-    welcomeMsg += `   /menu\n\n`;
+    welcomeMsg += `   .menu\n\n`;
     welcomeMsg += `💡 Gửi lệnh bất kỳ để xem hướng dẫn chi tiết\n\n`;
     welcomeMsg += `🎉 Chúc bạn sử dụng vui vẻ!`;
 
