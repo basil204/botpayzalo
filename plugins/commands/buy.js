@@ -298,7 +298,7 @@ async function createPurchaseQR(bot, chatId, userId, product, quantity, totalPri
     const transactionId = `purchase-${userId}-${Date.now()}-${code}`;
     
     // Create pending purchase transaction
-    db.addPendingTransaction(transactionId, {
+    const transactionData = {
       type: 'purchase',
       userId: userId,
       chatId: chatId,
@@ -308,7 +308,10 @@ async function createPurchaseQR(bot, chatId, userId, product, quantity, totalPri
       productId: product.id,
       productName: product.name,
       quantity: quantity
-    });
+    };
+    
+    db.addPendingTransaction(transactionId, transactionData);
+    Logger.info(`[BUY] Đã tạo pending purchase transaction: ${transactionId}, code: ${code}, amount: ${totalPrice}, userId: ${userId}, product: ${product.name}, quantity: ${quantity}`);
     
     // Generate QR code URL
     const qrUrl = generateVietQRUrl(totalPrice, code);

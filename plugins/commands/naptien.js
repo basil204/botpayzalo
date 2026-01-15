@@ -83,19 +83,23 @@ async function checkTransactionHistory() {
         if (response && response.data) {
           // Check if response has the expected structure
           if (response.data.result && response.data.result.ok) {
-            Logger.info(`[NAPTIEN] API call thành công với endpoint: ${endpoint.method} ${endpoint.url}`);
-            return response.data.transactionHistoryList || [];
+            const transactions = response.data.transactionHistoryList || [];
+            Logger.info(`[NAPTIEN] ✅ API call thành công với endpoint: ${endpoint.method} ${endpoint.url}, nhận được ${transactions.length} giao dịch`);
+            return transactions;
           }
           // Sometimes API might return data directly
           if (Array.isArray(response.data.transactionHistoryList)) {
-            Logger.info(`[NAPTIEN] API call thành công với endpoint: ${endpoint.method} ${endpoint.url}`);
+            Logger.info(`[NAPTIEN] ✅ API call thành công với endpoint: ${endpoint.method} ${endpoint.url}, nhận được ${response.data.transactionHistoryList.length} giao dịch`);
             return response.data.transactionHistoryList;
           }
           // Check if data is array directly
           if (Array.isArray(response.data)) {
-            Logger.info(`[NAPTIEN] API call thành công với endpoint: ${endpoint.method} ${endpoint.url}`);
+            Logger.info(`[NAPTIEN] ✅ API call thành công với endpoint: ${endpoint.method} ${endpoint.url}, nhận được ${response.data.length} giao dịch`);
             return response.data;
           }
+          
+          // Log unexpected structure
+          Logger.warn(`[NAPTIEN] ⚠️ API trả về structure không mong đợi từ ${endpoint.method} ${endpoint.url}: ${JSON.stringify(Object.keys(response.data))}`);
         }
       } catch (error) {
         lastError = error;
@@ -134,21 +138,68 @@ async function checkTransactionHistory() {
  */
 function findTransactionByCode(transactions, code, amount) {
   if (!transactions || !Array.isArray(transactions)) {
+    Logger.warn(`[NAPTIEN] findTransactionByCode: transactions không phải array hoặc null`);
     return null;
   }
 
+  if (!code || !amount) {
+    Logger.warn(`[NAPTIEN] findTransactionByCode: code hoặc amount không hợp lệ - code: ${code}, amount: ${amount}`);
+    return null;
+  }
+
+  const codeUpper = code.toUpperCase().trim();
+  const targetAmount = parseInt(amount);
+  
+  if (isNaN(targetAmount) || targetAmount <= 0) {
+    Logger.warn(`[NAPTIEN] findTransactionByCode: amount không hợp lệ - ${amount}`);
+    return null;
+  }
+  
+  Logger.info(`[NAPTIEN] Đang tìm transaction với code: "${code}", amount: ${targetAmount}, trong ${transactions.length} giao dịch`);
+
   for (const transaction of transactions) {
-    // Check if addDescription contains the code
-    const addDesc = (transaction.addDescription || '').toUpperCase();
-    const description = (transaction.description || '').toUpperCase();
-    const codeUpper = code.toUpperCase();
-    
-    if ((addDesc.includes(codeUpper) || description.includes(codeUpper)) && 
-        transaction.creditAmount && 
-        parseInt(transaction.creditAmount) === parseInt(amount)) {
-      return transaction;
+    try {
+      // Check if addDescription contains the code
+      const addDesc = (transaction.addDescription || '').toUpperCase().trim();
+      const description = (transaction.description || '').toUpperCase().trim();
+      
+      // Parse creditAmount - handle both string and number
+      let creditAmount = 0;
+      if (transaction.creditAmount !== undefined && transaction.creditAmount !== null) {
+        creditAmount = parseInt(transaction.creditAmount);
+        if (isNaN(creditAmount)) {
+          creditAmount = 0;
+        }
+      }
+      
+      // Check code match (remove spaces and special chars for comparison)
+      const normalizedAddDesc = addDesc.replace(/\s+/g, '');
+      const normalizedDescription = description.replace(/\s+/g, '');
+      const normalizedCode = codeUpper.replace(/\s+/g, '');
+      
+      const hasCode = normalizedAddDesc.includes(normalizedCode) || normalizedDescription.includes(normalizedCode);
+      const amountMatch = creditAmount === targetAmount;
+      
+      // Log all transactions for debugging (only first few to avoid spam)
+      if (transactions.indexOf(transaction) < 3) {
+        Logger.info(`[NAPTIEN] Checking transaction ${transaction.refNo || 'N/A'}: addDesc="${addDesc}", desc="${description}", amount=${creditAmount}`);
+      }
+      
+      if (hasCode && amountMatch) {
+        Logger.info(`[NAPTIEN] ✅ Tìm thấy matching transaction! RefNo: ${transaction.refNo}, addDesc: "${addDesc}", description: "${description}", amount: ${creditAmount}`);
+        return transaction;
+      }
+      
+      // Log for debugging if code matches but amount doesn't
+      if (hasCode && !amountMatch) {
+        Logger.warn(`[NAPTIEN] ⚠️ Code "${code}" tìm thấy nhưng amount không khớp: expected ${targetAmount}, got ${creditAmount} (RefNo: ${transaction.refNo || 'N/A'})`);
+      }
+    } catch (error) {
+      Logger.error(`[NAPTIEN] Lỗi khi xử lý transaction trong findTransactionByCode: ${error.message}`);
     }
   }
+  
+  Logger.info(`[NAPTIEN] ❌ Không tìm thấy transaction matching code "${code}" và amount ${targetAmount}`);
   return null;
 }
 
@@ -295,79 +346,104 @@ async function processPurchaseTransaction(bot, transaction, transactionId) {
  * Process pending transactions
  */
 async function processPendingTransactions(bot) {
-  const pending = db.getPendingTransactions();
-  const now = new Date();
-  const transactions = await checkTransactionHistory();
+  try {
+    const pending = db.getPendingTransactions();
+    const now = new Date();
+    
+    const pendingCount = Object.keys(pending.transactions || {}).length;
+    if (pendingCount === 0) {
+      return; // No pending transactions
+    }
+    
+    Logger.info(`[NAPTIEN] Đang kiểm tra ${pendingCount} giao dịch pending...`);
+    
+    const transactions = await checkTransactionHistory();
+    Logger.info(`[NAPTIEN] Đã lấy ${transactions.length} giao dịch từ API`);
 
-  for (const [transactionId, transaction] of Object.entries(pending.transactions)) {
-    try {
-      // Check if expired (5 minutes)
-      const expiresAt = new Date(transaction.expiresAt);
-      if (now > expiresAt) {
-        // Send cancellation message
-        try {
-          await bot.sendMessage(transaction.chatId,
-            `⏰ *QR Code đã hết hạn*\n\n` +
-            `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
-            `🔑 Mã giao dịch: ${transaction.code}\n\n` +
-            `QR code đã bị hủy sau 5 phút không có giao dịch.`
-          );
-        } catch (err) {
-          Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo hủy: ${err.message}`);
-        }
+    for (const [transactionId, transaction] of Object.entries(pending.transactions)) {
+      try {
+        Logger.info(`[NAPTIEN] Đang xử lý transaction ${transactionId}, code: ${transaction.code}, amount: ${transaction.amount}, type: ${transaction.type || 'top-up'}`);
         
-        // Remove from pending
-        db.removePendingTransaction(transactionId);
-        Logger.info(`[NAPTIEN] Đã hủy transaction ${transactionId} (hết hạn)`);
-        continue;
-      }
-
-      // Check if transaction found
-      const foundTransaction = findTransactionByCode(transactions, transaction.code, transaction.amount);
-      
-      if (foundTransaction) {
-        // Check if refNo already processed
-        if (db.refNoExists(foundTransaction.refNo)) {
-          Logger.info(`[NAPTIEN] RefNo ${foundTransaction.refNo} đã được xử lý trước đó`);
+        // Check if expired (5 minutes)
+        const expiresAt = new Date(transaction.expiresAt);
+        if (now > expiresAt) {
+          // Send cancellation message
+          try {
+            await bot.sendMessage(transaction.chatId,
+              `⏰ *QR Code đã hết hạn*\n\n` +
+              `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
+              `🔑 Mã giao dịch: ${transaction.code}\n\n` +
+              `QR code đã bị hủy sau 5 phút không có giao dịch.`
+            );
+          } catch (err) {
+            Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo hủy: ${err.message}`);
+          }
+          
+          // Remove from pending
+          db.removePendingTransaction(transactionId);
+          Logger.info(`[NAPTIEN] Đã hủy transaction ${transactionId} (hết hạn)`);
           continue;
         }
 
-        // Add refNo to history
-        db.addRefNoToHistory(foundTransaction.refNo, transactionId);
-
-        // Check transaction type
-        if (transaction.type === 'purchase') {
-          // Handle purchase transaction
-          await processPurchaseTransaction(bot, transaction, transactionId);
-        } else {
-          // Handle top-up transaction
-          const userBalance = db.updateUserBalance(
-            transaction.userId,
-            parseInt(transaction.amount),
-            `Nạp tiền - Mã: ${transaction.code}`
-          );
-
-          // Send success message
-          try {
-            await bot.sendMessage(transaction.chatId,
-              `✅ *Nạp tiền thành công!*\n\n` +
-              `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
-              `🔑 Mã giao dịch: ${transaction.code}\n` +
-              `📊 Số dư hiện tại: ${userBalance.balance.toLocaleString('vi-VN')}đ\n\n` +
-              `Cảm ơn bạn đã sử dụng dịch vụ!`
-            );
-          } catch (err) {
-            Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo thành công: ${err.message}`);
+        // Check if transaction found
+        const foundTransaction = findTransactionByCode(transactions, transaction.code, transaction.amount);
+        
+        if (foundTransaction) {
+          Logger.info(`[NAPTIEN] Tìm thấy giao dịch matching! RefNo: ${foundTransaction.refNo}, Code: ${transaction.code}, Amount: ${transaction.amount}`);
+          
+          // Check if refNo already processed
+          if (db.refNoExists(foundTransaction.refNo)) {
+            Logger.info(`[NAPTIEN] RefNo ${foundTransaction.refNo} đã được xử lý trước đó`);
+            // Remove from pending if already processed
+            db.removePendingTransaction(transactionId);
+            continue;
           }
-        }
 
-        // Remove from pending
-        db.removePendingTransaction(transactionId);
-        Logger.info(`[NAPTIEN] Đã xử lý thành công transaction ${transactionId}`);
+          // Add refNo to history
+          db.addRefNoToHistory(foundTransaction.refNo, transactionId);
+
+          // Check transaction type
+          if (transaction.type === 'purchase') {
+            Logger.info(`[NAPTIEN] Xử lý purchase transaction ${transactionId}`);
+            // Handle purchase transaction
+            await processPurchaseTransaction(bot, transaction, transactionId);
+          } else {
+            Logger.info(`[NAPTIEN] Xử lý top-up transaction ${transactionId}`);
+            // Handle top-up transaction
+            const userBalance = db.updateUserBalance(
+              transaction.userId,
+              parseInt(transaction.amount),
+              `Nạp tiền - Mã: ${transaction.code}`
+            );
+
+            // Send success message
+            try {
+              await bot.sendMessage(transaction.chatId,
+                `✅ *Nạp tiền thành công!*\n\n` +
+                `💰 Số tiền: ${parseInt(transaction.amount).toLocaleString('vi-VN')}đ\n` +
+                `🔑 Mã giao dịch: ${transaction.code}\n` +
+                `📊 Số dư hiện tại: ${userBalance.balance.toLocaleString('vi-VN')}đ\n\n` +
+                `Cảm ơn bạn đã sử dụng dịch vụ!`
+              );
+            } catch (err) {
+              Logger.error(`[NAPTIEN] Lỗi khi gửi thông báo thành công: ${err.message}`);
+            }
+          }
+
+          // Remove from pending
+          db.removePendingTransaction(transactionId);
+          Logger.info(`[NAPTIEN] Đã xử lý thành công transaction ${transactionId}`);
+        } else {
+          Logger.info(`[NAPTIEN] Chưa tìm thấy giao dịch matching cho code ${transaction.code}, amount ${transaction.amount}`);
+        }
+      } catch (error) {
+        Logger.error(`[NAPTIEN] Lỗi khi xử lý transaction ${transactionId}: ${error.message}`);
+        Logger.error(`[NAPTIEN] Stack: ${error.stack}`);
       }
-    } catch (error) {
-      Logger.error(`[NAPTIEN] Lỗi khi xử lý transaction ${transactionId}: ${error.message}`);
     }
+  } catch (error) {
+    Logger.error(`[NAPTIEN] Lỗi không mong đợi trong processPendingTransactions: ${error.message}`);
+    Logger.error(`[NAPTIEN] Stack: ${error.stack}`);
   }
 }
 
@@ -400,16 +476,26 @@ let pollingInterval = null;
 
 function startPolling(bot) {
   if (pollingInterval) {
+    Logger.info('[NAPTIEN] Polling đã được khởi động trước đó');
     return; // Already started
   }
 
-  // Process every 30 seconds
-  pollingInterval = setInterval(async () => {
-    await processPendingTransactions(bot);
-    cleanupOldRefNos();
-  }, 30000); // 30 seconds
+  // Process immediately on start
+  processPendingTransactions(bot).catch(err => {
+    Logger.error(`[NAPTIEN] Lỗi trong lần check đầu tiên: ${err.message}`);
+  });
 
-  Logger.info('[NAPTIEN] Đã bắt đầu polling transactions');
+  // Process every 15 seconds (giảm từ 30s để check nhanh hơn)
+  pollingInterval = setInterval(async () => {
+    try {
+      await processPendingTransactions(bot);
+      cleanupOldRefNos();
+    } catch (error) {
+      Logger.error(`[NAPTIEN] Lỗi trong polling interval: ${error.message}`);
+    }
+  }, 15000); // 15 seconds
+
+  Logger.info('[NAPTIEN] Đã bắt đầu polling transactions (interval: 15 giây)');
 }
 
 function stopPolling() {
@@ -483,13 +569,16 @@ module.exports = {
     const transactionId = `${userId}-${Date.now()}-${code}`;
 
     // Create pending transaction
-    db.addPendingTransaction(transactionId, {
+    const transactionData = {
       userId: userId,
       chatId: chatId,
       amount: amount,
       code: code,
       status: 'pending'
-    });
+    };
+    
+    db.addPendingTransaction(transactionId, transactionData);
+    Logger.info(`[NAPTIEN] Đã tạo pending transaction: ${transactionId}, code: ${code}, amount: ${amount}, userId: ${userId}`);
 
     // Generate QR code URL
     const qrUrl = generateVietQRUrl(amount, code);
